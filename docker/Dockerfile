@@ -1,12 +1,15 @@
-# Playwright's own image ships matching Chromium + OS deps, which is the
-# fiddly part of running a headless browser in a container. Tag must match
-# the "playwright" npm version resolved below, or Playwright refuses to
-# launch (browser binary version mismatch) — check with
-# `node -e "console.log(require('./node_modules/playwright/package.json').version)"`
-# after any `npm install`/`npm update` and bump this tag to match.
-FROM mcr.microsoft.com/playwright:v1.62.1-jammy
+# No browser in the deployed image on purpose — the runtime scrape path is
+# plain HTTP (see src/scraper/http/), not Playwright. The browser only ever
+# runs locally, interactively, for `npm run login`.
+FROM node:20-slim
 
 WORKDIR /app
+
+# Prisma's query engine needs OpenSSL present; skip Playwright's own
+# postinstall browser download since "playwright" stays a runtime
+# dependency only for login.ts's types/imports, never launched here.
+RUN apt-get update && apt-get install -y --no-install-recommends openssl && rm -rf /var/lib/apt/lists/*
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 
 COPY package.json package-lock.json ./
 RUN npm ci

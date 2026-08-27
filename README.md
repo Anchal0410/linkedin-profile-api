@@ -1,8 +1,11 @@
 # LinkedIn Profile API
 
-Accepts a LinkedIn profile URL and returns structured JSON (name, headline,
-location, about, experience, education, skills, certifications, languages,
-profile/banner images) by driving a real logged-in LinkedIn session.
+Accepts a LinkedIn profile URL and returns structured JSON, using a real
+logged-in LinkedIn session's cookies against a plain HTTP request — no
+browser automation at request time (see [Approach](#approach)). Currently
+returns name, headline, location, and profile/banner images reliably;
+about/experience/education/skills/certifications/languages are a documented
+gap, not a silent one — see [Known limitations](#known-limitations).
 
 ## ⚠️ Before you use this
 
@@ -32,22 +35,25 @@ Client -> Fastify API (API-key auth, rate limit)
             -> cache check (Postgres)
             -> BullMQ job queue (Redis)
                  -> account pool (checks out a session, paces requests)
-                 -> Voyager internal API (fast path)
-                    -> falls back to Playwright DOM scrape on block/challenge
+                 -> plain HTTP GET of the profile page + HTML parse
                  -> normalize -> cache write
 ```
 
+**No browser at runtime.** The only place a browser (Playwright) touches
+this system is the one-time, interactive `npm run login` — LinkedIn's login
+UI and checkpoint challenge genuinely need a real browser to solve, and
+there's no way around that. Every actual profile *scrape* is a plain
+`fetch()` reusing that login's session cookies; the deployed Docker image
+doesn't even ship Chromium (see `docker/Dockerfile`).
+
 - **Session**: one real login via Playwright (`npm run login`), persisted as
   a Playwright `storageState` (cookies) in Postgres. Not re-logged-in per
-  request.
-- **Fetch — primary**: calls LinkedIn's internal "Voyager" API
-  (`/voyager/api/identity/profiles/{id}/profileView`) directly with the
-  session cookies. Fast, structured JSON, but brittle — LinkedIn changes
-  this response shape across releases without notice.
-- **Fetch — fallback**: renders the real profile page in a headless browser
-  and reads it via accessible-role/section-id locators (more resilient to
-  LinkedIn's rotating CSS class names than a class-selector scraper, but
-  slower).
+  request, and never touched again by the scraping path itself.
+- **Fetch**: `GET https://www.linkedin.com/in/{id}/` with the session
+  cookies as headers — a plain HTTP request, parsed with regex/string
+  matching against known-stable anchors (the `<title>` tag, the contact-info
+  overlay link's href) rather than CSS classes, which LinkedIn hashes
+  per-build. See [Approach](#approach) for why those anchors specifically.
 - **Account pool**: built to hold N accounts (`Account` table, `status`:
   `active`/`quarantined`/`dead`), each with its own paced sub-queue and a
   sticky proxy slot. Only one account is actually configured/used in this
@@ -117,29 +123,40 @@ Cache-only read; `404` if nothing cached yet for that identifier.
   "skills": ["..."],
   "certifications": [{ "name": "", "issuer": "", "date": "" }],
   "languages": [{ "name": "", "proficiency": "" }],
-  "source": "voyager | dom",
-  "dataCompleteness": "full | limited-out-of-network",
+  "source": "http",
+  "dataCompleteness": "partial-fields-only",
   "scrapedAt": "2026-08-27T12:00:00.000Z"
 }
 ```
 
 ## Approach
 
-Built the Voyager path first because it returns clean structured JSON when
-it works — but LinkedIn's profile page as of this build is a **server-driven
-UI**: section containers get dynamically-generated URN-based ids
-(`com.linkedin.sdui.profile.card.ref<urn>About`, etc.), not stable
-classes/ids, and cards hydrate asynchronously after initial page load. That
-combination is what makes both the internal API shape and any
-CSS-selector-based scraper fragile. Voyager falls back to DOM-rendering when
-blocked; the DOM path itself is heading-anchored (find the section by its
-*visible text*, e.g. "About", "Experience" — the one thing LinkedIn hasn't
-obfuscated) plus positional text parsing, rather than id/class selectors,
-since those don't exist to select against anymore.
+Started by trying LinkedIn's internal "Voyager" REST endpoint
+(`/voyager/api/identity/profiles/{id}/profileView`) — the classic
+scraper target. It's dead: returns `410 Gone` now. Captured real network
+traffic from a logged-in session to see what actually replaced it, and
+found LinkedIn has moved to React Server Components — profile content is
+now fetched through `flagship-web/rsc-action/actions/component` calls
+returning RSC wire format, and a unified `/voyager/api/graphql` endpoint
+keyed by internal member URNs rather than the public profile slug. Neither
+is a simple REST-JSON call to replicate.
 
-This was verified against a real logged-in session during development, not
-left as an untested guess — see limitations below for exactly what that
-verification did and didn't cover.
+What *is* still simple: name, headline, location, and profile/banner images
+are server-rendered directly into the initial page HTML — confirmed by
+diffing a plain `fetch()` of the profile URL against what a real browser
+renders, byte for byte the same content. So the actual approach is: fetch
+that HTML with the session cookies, extract those fields from anchors
+LinkedIn can't easily obfuscate without breaking the page itself — the
+`<title>Name | LinkedIn</title>` tag for the name, its immediate DOM
+neighbor for the headline, and the fixed `/overlay/contact-info/` link's
+preceding siblings for location. Verified against two independent real
+profiles (the account owner's own, and a public third party), plus
+negative-tested against a nonexistent profile identifier to confirm the
+not-found detection doesn't false-positive on real ones.
+
+About/experience/education/skills/certifications/languages load through
+those RSC endpoints and aren't cracked — see limitations below rather than
+a silent guess dressed up as a real value.
 
 ## Known limitations
 
@@ -148,23 +165,19 @@ verification did and didn't cover.
 - **Account ban risk** — the scraping account will eventually get
   checkpointed or banned; there's no guaranteed way around this short of
   not scraping.
-- **Out-of-network truncation** — LinkedIn returns partial data (no
-  experience/education detail) for profiles outside the scraping account's
-  1st/2nd/3rd-degree network, regardless of technique. Reflected in
-  `dataCompleteness`, not fixable by scraping harder.
-- **Experience/Education/Certifications/Languages list-splitting is
-  unverified** — the topcard (name/headline/location), About, and both
-  profile/banner images were verified end-to-end against a real profile.
-  The list sections use the same heading-anchored approach but were built
-  against a profile that doesn't have them populated, so the
-  blob-into-entries splitting (`domScraper.ts`'s `extractListSection`) is
-  a best-effort guess at how multiple entries are text-delimited, not a
-  confirmed one. Test against a profile with a filled-in Experience section
-  and expect to adjust the split logic.
-- **SDUI card hydration timing** — sections mount asynchronously; the
-  scraper waits for each heading to appear (bounded, ~4s) rather than
-  trusting a fixed page-load delay, but a slow connection could still race
-  this on a section that takes longer than that to hydrate.
+- **About/experience/education/skills/certifications/languages aren't
+  fetched at all** — the single biggest gap. These load client-side
+  through LinkedIn's React Server Component endpoints, which weren't
+  cracked (tried both GET and a naive POST against the likely About card's
+  endpoint; both returned `500` — getting further needs the exact request
+  payload shape a real browser sends, which needs another dedicated
+  capture pass). `dataCompleteness: "partial-fields-only"` says this
+  plainly in every response rather than returning an empty array that
+  looks like "this person has none."
+- **Out-of-network truncation** — separately from the above, LinkedIn also
+  restricts what even a fully-working scrape could see for profiles
+  outside the account's 1st/2nd/3rd-degree network. Not measured/reflected
+  yet since the fields it would affect aren't fetched at all currently.
 - **No CAPTCHA/2FA solving** — `npm run login` needs a human present the
   first time (and again after any checkpoint, wherever in the flow it
   appears); it doesn't attempt to automate past that.

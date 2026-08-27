@@ -12,12 +12,11 @@ async function main() {
   await app.listen({ port: env.PORT, host: "0.0.0.0" });
   logger.info(`API listening on :${env.PORT}`);
 
-  const { worker, browser } = await startWorker();
+  const worker = startWorker();
 
   const shutdown = async () => {
     await app.close();
     await worker.close();
-    await browser.close();
     process.exit(0);
   };
   process.on("SIGINT", shutdown);

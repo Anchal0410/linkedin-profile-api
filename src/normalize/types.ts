@@ -41,10 +41,15 @@ export const ProfileSchema = z.object({
   skills: z.array(z.string()),
   certifications: z.array(CertificationSchema),
   languages: z.array(LanguageSchema),
-  source: z.enum(["voyager", "dom"]),
-  // "full" when the scraping account is in-network with the profile;
-  // LinkedIn truncates experience/education/skills for out-of-network views.
-  dataCompleteness: z.enum(["full", "limited-out-of-network"]),
+  source: z.enum(["http"]),
+  // "partial-fields-only": name/headline/location/images are real
+  // (server-rendered into the page LinkedIn sends back); about/experience/
+  // education/skills/certifications/languages are always empty because
+  // that path — LinkedIn's client-side React Server Component endpoints —
+  // isn't reverse-engineered yet, not because this specific profile lacks
+  // them. See README limitations before treating an empty array as "this
+  // person has no experience listed."
+  dataCompleteness: z.enum(["partial-fields-only"]),
   scrapedAt: z.string(),
 });
 
