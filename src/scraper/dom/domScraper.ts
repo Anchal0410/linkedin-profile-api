@@ -42,7 +42,11 @@ const SKIP_LINE = /^(·|contact info)$/i;
 // LinkedIn's SDUI cards hydrate asynchronously after the initial render —
 // Locator.count() is an instant snapshot and doesn't wait, so it can race a
 // section that hasn't mounted yet. Wait for actual appearance instead.
-async function existsWithin(locator: Locator, timeout = 4000): Promise<boolean> {
+// 12s, not 4s: a resource-constrained host (small cloud instance) renders
+// the page meaningfully slower than a dev machine — confirmed in production
+// (name/headline/about came back null while image extraction, which uses
+// Playwright's own much longer default actionability wait, succeeded).
+async function existsWithin(locator: Locator, timeout = 12000): Promise<boolean> {
   try {
     await locator.first().waitFor({ state: "attached", timeout });
     return true;
