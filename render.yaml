@@ -1,0 +1,86 @@
+# Render Blueprint — https://render.com/docs/blueprint-spec
+#
+# Deploys the API as a web service + the scrape worker as a background
+# worker, sharing one Postgres and an external Upstash Redis instance
+# (rediss:// — TLS is required; plain redis:// won't authenticate).
+# LINKEDIN_EMAIL, LINKEDIN_PASSWORD, REDIS_URL, and API_KEY are marked
+# sync:false (secret, set once in the Render dashboard) rather than
+# committed here.
+#
+# There is no automated login on this platform: LinkedIn's checkpoint needs
+# a human in a real browser window, which a headless Render instance can't
+# provide. The deployed worker is expected to start from a session
+# established locally via `npm run login` and imported into this Postgres
+# instance — see README. When the session eventually expires, that's the
+# same process to repeat, not something this blueprint automates.
+databases:
+  - name: linkedin-profile-api-db
+    plan: starter
+    databaseName: linkedin_profile_api
+    user: linkedin_profile_api
+
+services:
+  - type: web
+    name: linkedin-profile-api
+    runtime: docker
+    dockerfilePath: docker/Dockerfile
+    dockerContext: .
+    # migrate deploy uses Postgres advisory locks, so it's safe for both this
+    # and the worker's startup command to run it on every deploy.
+    dockerCommand: sh -c "npx prisma migrate deploy && node dist/index.js"
+    plan: starter
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: linkedin-profile-api-db
+          property: connectionString
+      - key: REDIS_URL
+        sync: false # rediss://default:<password>@fair-horse-168759.upstash.io:6379
+      - key: LINKEDIN_EMAIL
+        sync: false
+      - key: LINKEDIN_PASSWORD
+        sync: false
+      - key: LOGIN_HEADLESS
+        value: "true"
+      - key: API_KEY
+        sync: false
+      - key: RATE_LIMIT_PER_MINUTE
+        value: "20"
+      - key: SCRAPE_MIN_DELAY_MS
+        value: "4000"
+      - key: SCRAPE_MAX_DELAY_MS
+        value: "9000"
+      - key: CACHE_TTL_HOURS
+        value: "72"
+      - key: PORT
+        value: "3000"
+
+  - type: worker
+    name: linkedin-profile-api-worker
+    runtime: docker
+    dockerfilePath: docker/Dockerfile
+    dockerContext: .
+    dockerCommand: sh -c "npx prisma migrate deploy && node dist/queue/worker.js"
+    plan: starter
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: linkedin-profile-api-db
+          property: connectionString
+      - key: REDIS_URL
+        sync: false # rediss://default:<password>@fair-horse-168759.upstash.io:6379
+      - key: LINKEDIN_EMAIL
+        sync: false
+      - key: LINKEDIN_PASSWORD
+        sync: false
+      - key: LOGIN_HEADLESS
+        value: "true"
+      - key: API_KEY
+        sync: false
+      - key: SCRAPE_MIN_DELAY_MS
+        value: "4000"
+      - key: SCRAPE_MAX_DELAY_MS
+        value: "9000"
+      - key: CACHE_TTL_HOURS
+        value: "72"

@@ -74,9 +74,16 @@ npx prisma migrate dev --name init
 # and only you can clear that.
 npm run login
 
-npm run worker:dev   # terminal 1
-npm run dev           # terminal 2
+npm run dev   # API server + worker run together in one process
 ```
+
+`npm run dev` (→ `src/index.ts`) starts the API server and the scrape
+worker together in one process — one command, matching a deploy that only
+allows a single start command (e.g. one Render service). `queue/worker.ts`
+is a separate standalone worker-only entrypoint sharing the same
+`startWorker()`, kept for a two-service deploy — don't run both at once
+against the same `REDIS_URL`, or you get two concurrent LinkedIn sessions
+fighting over one account instead of one paced session.
 
 ## API
 

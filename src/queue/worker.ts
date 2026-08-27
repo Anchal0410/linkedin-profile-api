@@ -1,21 +1,12 @@
-import { Worker } from "bullmq";
-import { chromium } from "playwright";
+// Standalone worker process — for a two-service deploy (separate API +
+// worker). For a single-service deploy, index.ts starts this same worker
+// in-process instead; see startWorker() in runWorker.ts.
 import { env } from "../config/env.js";
 import { logger } from "../config/logger.js";
-import { SCRAPE_QUEUE_NAME, redisConnection } from "./queue.js";
-import { makeScrapeProcessor } from "./scrapeProcessor.js";
+import { startWorker } from "./runWorker.js";
 
 async function main() {
-  const browser = await chromium.launch({ headless: true });
-  logger.info("Headless browser launched for DOM-fallback scraping");
-
-  const worker = new Worker(SCRAPE_QUEUE_NAME, makeScrapeProcessor(browser), {
-    connection: redisConnection,
-    concurrency: 1, // one LinkedIn session in flight at a time (see accountPool/pool.ts)
-  });
-
-  worker.on("completed", (job) => logger.info({ jobId: job.id, data: job.data }, "Job completed"));
-  worker.on("failed", (job, err) => logger.error({ jobId: job?.id, err: err.message }, "Job failed"));
+  const { worker, browser } = await startWorker();
 
   const shutdown = async () => {
     await worker.close();
