@@ -1,0 +1,35 @@
+{
+  "name": "linkedin-profile-api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "worker:dev": "tsx watch src/queue/worker.ts",
+    "worker": "node dist/queue/worker.js",
+    "login": "tsx src/scripts/login.ts",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev"
+  },
+  "dependencies": {
+    "@fastify/rate-limit": "^9.1.0",
+    "@prisma/client": "^5.19.1",
+    "bullmq": "^5.13.2",
+    "dotenv": "^16.4.5",
+    "fastify": "^4.28.1",
+    "ioredis": "^5.4.1",
+    "pino": "^9.4.0",
+    "playwright": "^1.47.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^20.16.5",
+    "pino-pretty": "^11.2.2",
+    "prisma": "^5.19.1",
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.2"
+  }
+}

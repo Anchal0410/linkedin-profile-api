@@ -1,0 +1,44 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// One row per LinkedIn account the scraper can act as. Testing scope runs
+// with a single row; the pool/health fields exist so more accounts can be
+// added later without a schema change.
+model Account {
+  id          String    @id @default(cuid())
+  label       String    @unique
+  email       String
+  status      String    @default("inactive") // inactive | active | warming | quarantined | dead
+  proxyUrl    String?
+  cookieJson  String? // serialized Playwright storageState, plaintext (dev-only DB, see README limitations)
+  lastLoginAt DateTime?
+  lastUsedAt  DateTime?
+  lastError   String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model CachedProfile {
+  id                String   @id @default(cuid())
+  publicIdentifier  String   @unique
+  data              Json
+  dataCompleteness  String
+  scrapedAt         DateTime
+  expiresAt         DateTime
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  accountId String?
+  event     String
+  detail    Json?
+  createdAt DateTime @default(now())
+}
